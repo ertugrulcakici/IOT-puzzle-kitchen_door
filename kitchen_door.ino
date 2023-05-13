@@ -1,26 +1,18 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-/*
-sda
-10 13 11 12 boş gnd 9 3v 
-*/
-
-
-
 #define SS_PIN 10
 #define RST_PIN 9
 
+#define DOOR_PUSH_PIN 7
+#define DOOR_PULL_PIN 6
 
-#define door_push 7
-#define door_pull 6
+#define FAN_ROLE_PIN 5
+#define FAN_BUTTON_PIN 4
 
-#define fan_role 5
-#define fan_button 4
-
-String correctCard = "321953936";
-String correctCardBackup = "21020213228";
-String gameCards[] = {
+String masterCard = "321953936";
+String backupMasterCard = "21020213228";
+String gameCardIds[] = {
     "2272813922",
     "19510723820",
     "322414536",
@@ -28,14 +20,15 @@ String gameCards[] = {
 
 MFRC522 mfrc522[1];
 
-String wait_until_read();
-String dump_byte_array(byte *buffer, byte bufferSize);
-bool is_game_card(String cardId);
+// Function prototypes
+String waitUntilCardRead();
+String convertByteArrayToString(byte *buffer, byte bufferSize);
+bool isGameCard(String cardId);
 
-void fan_active(bool active);
-void open_door(bool active);
+void setFanActive(bool active);
+void openDoor(bool active);
 
-String get_card_string();
+String getCardIdString();
 
 void setup()
 {
@@ -44,13 +37,13 @@ void setup()
     Serial.println("Start");
 #endif
 
-    pinMode(door_push, OUTPUT);
-    pinMode(door_pull, OUTPUT);
-    pinMode(fan_role, OUTPUT);
+    pinMode(DOOR_PUSH_PIN, OUTPUT);
+    pinMode(DOOR_PULL_PIN, OUTPUT);
+    pinMode(FAN_ROLE_PIN, OUTPUT);
 
     SPI.begin();
     mfrc522[0].PCD_Init(SS_PIN, RST_PIN);
-    //mfrc522[0].PCD_DumpVersionToSerial();
+    // mfrc522[0].PCD_DumpVersionToSerial();
 }
 
 void loop()
@@ -58,39 +51,38 @@ void loop()
 #ifdef DEBUG
     Serial.print(F("Waiting for card...\n"));
 #endif
-    String cardId = wait_until_read();
+    String cardId = waitUntilCardRead();
 #ifdef DEBUG
     Serial.print(F("Card ID: "));
     Serial.println(cardId);
 #endif
-    if (cardId == correctCard || cardId == correctCardBackup)
+    if (cardId == masterCard || cardId == backupMasterCard)
     {
 #ifdef DEBUG
-        Serial.print(F("Correct card\n"));
+        Serial.print(F("Master card detected\n"));
 #endif
-        fan_active(true);
-        open_door(true);
+        setFanActive(true);
+        openDoor(true);
 
-        while (!digitalRead(fan_button))
+        while (!digitalRead(FAN_BUTTON_PIN))
         {
 #ifdef DEBUG
             Serial.print(F("Button state: "));
-            Serial.println(digitalRead(fan_button));
+            Serial.println(digitalRead(FAN_BUTTON_PIN));
 #endif
             if (mfrc522[0].PICC_IsNewCardPresent() && mfrc522[0].PICC_ReadCardSerial())
             {
                 // print "new card readed"
-                String new_card = get_card_string();
-                #ifdef DEBUG
-                Serial.print(F("New card readed: "));
+                String new_card = getCardIdString();
+#ifdef DEBUG
+                Serial.print(F("New card read: "));
                 Serial.println(new_card);
-
-                #endif
-                bool cond1 = is_game_card(new_card);
-                bool cond2 = (new_card == correctCard);
-                bool cond3 = (new_card == correctCardBackup);
-                // print all conditions in one line
-                #ifdef DEBUG
+#endif
+                bool cond1 = isGameCard(new_card);
+                bool cond2 = (new_card == masterCard);
+                bool cond3 = (new_card == backupMasterCard);
+// print all conditions in one line
+#ifdef DEBUG
                 Serial.print(F("cond1: "));
                 Serial.print(cond1);
                 Serial.print(F(" cond2: "));
@@ -98,59 +90,62 @@ void loop()
                 Serial.print(F(" cond3: "));
                 Serial.println(cond3);
                 delay(1000);
-                #endif
-                if (cond1 == false && cond2 == false && cond3 == false)
+#endif
+                if (!cond1 && !cond2 && !cond3)
                 {
-                    #ifdef DEBUG
+#ifdef DEBUG
                     Serial.println(F("Admin card"));
-                    #endif
-                    open_door(false);
+#endif
+                    openDoor(false);
                     break;
                 }
-            } else 
+            }
+            else
             {
-                #ifdef DEBUG
+#ifdef DEBUG
                 Serial.println(F("No new card"));
-                #endif
+#endif
             }
             delay(100);
         } // end of while
 #ifdef DEBUG
         Serial.println(F("Button released"));
 #endif
-        fan_active(false);
+        setFanActive(false);
     }
-    else if (is_game_card(cardId))
+    else if (isGameCard(cardId))
     {
-        #ifdef DEBUG
+#ifdef DEBUG
         Serial.println(F("Wrong card"));
-        #endif
-    } else {
-        #ifdef DEBUG
+#endif
+    }
+    else
+    {
+#ifdef DEBUG
         Serial.println(F("Admin card"));
-        #endif
-        fan_active(false);
-        open_door(false);
+#endif
+        setFanActive(false);
+        openDoor(false);
     }
     delay(100);
 }
 
-String wait_until_read()
+String waitUntilCardRead()
 {
     while (true)
     {
         if (mfrc522[0].PICC_IsNewCardPresent() && mfrc522[0].PICC_ReadCardSerial())
         {
-            return dump_byte_array(mfrc522[0].uid.uidByte, mfrc522[0].uid.size);
+            String cardData = convertByteArrayToString(mfrc522[0].uid.uidByte, mfrc522[0].uid.size);
             mfrc522[0].PICC_HaltA();
             mfrc522[0].PCD_StopCrypto1();
-            break;
+            return cardData;
         }
         delay(100);
     }
 }
 
-String dump_byte_array(byte *buffer, byte bufferSize)
+String convertByteArrayToString(byte *buffer, byte bufferSize)
 {
     String data = "";
     for (byte i = 0; i < bufferSize; i++)
@@ -160,11 +155,12 @@ String dump_byte_array(byte *buffer, byte bufferSize)
     return data;
 }
 
-bool is_game_card(String cardId)
+bool isGameCard(String cardId)
 {
-    for (int i = 0; i < sizeof(gameCards) / sizeof(gameCards[0]); i++)
+    // Check if the card is a game card
+    for (int i = 0; i < sizeof(gameCardIds) / sizeof(gameCardIds[0]); i++)
     {
-        if (cardId == gameCards[i])
+        if (cardId == gameCardIds[i])
         {
             return true;
         }
@@ -172,36 +168,32 @@ bool is_game_card(String cardId)
     return false;
 }
 
-void fan_active(bool active)
+void setFanActive(bool active)
 {
+    // Activate or deactivate the fan
+    digitalWrite(FAN_ROLE_PIN, active ? HIGH : LOW);
+}
+
+void openDoor(bool active)
+{
+    // Open or close the door
     if (active)
     {
-        digitalWrite(fan_role, HIGH);
+        digitalWrite(DOOR_PUSH_PIN, HIGH);
+        digitalWrite(DOOR_PULL_PIN, LOW);
+        delay(1000);
+        digitalWrite(DOOR_PUSH_PIN, LOW);
     }
     else
     {
-        digitalWrite(fan_role, LOW);
+        digitalWrite(DOOR_PUSH_PIN, LOW);
+        digitalWrite(DOOR_PULL_PIN, HIGH);
+        delay(1000);
+        digitalWrite(DOOR_PULL_PIN, LOW);
     }
 }
 
-void open_door(bool active)
+String getCardIdString()
 {
-    if (active)
-    {
-        digitalWrite(door_push, HIGH);
-        digitalWrite(door_pull, LOW);
-        delay(1000);
-        digitalWrite(door_push, LOW);
-    }
-    else
-    {
-        digitalWrite(door_push, LOW);
-        digitalWrite(door_pull, HIGH);
-        delay(1000);
-        digitalWrite(door_pull, LOW);
-    }
-}
-
-String get_card_string() {
-    return dump_byte_array(mfrc522[0].uid.uidByte, mfrc522[0].uid.size);
+    return convertByteArrayToString(mfrc522[0].uid.uidByte, mfrc522[0].uid.size);
 }
